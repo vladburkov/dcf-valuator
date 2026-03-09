@@ -16,11 +16,11 @@ def main():
     # Check if streamlit is installed
     try:
         import streamlit
-        print("✅ Streamlit is installed")
+        print(" Streamlit is installed")
     except ImportError:
-        print("❌ Streamlit not found. Installing dependencies...")
+        print(" Streamlit not found. Installing dependencies...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements_web.txt"])
-        print("✅ Dependencies installed")
+        print(" Dependencies installed")
     
     # Get the directory of this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,12 +28,12 @@ def main():
     
     # Check if the web interface file exists
     if not os.path.exists(web_interface_path):
-        print(f"❌ Web interface file not found: {web_interface_path}")
+        print(f" Web interface file not found: {web_interface_path}")
         return
     
-    print("🌐 Starting web server...")
-    print("📱 The interface will open in your default browser")
-    print("🔗 If it doesn't open automatically, go to: http://localhost:8501")
+    print(" Starting web server...")
+    print(" The interface will open in your default browser")
+    print(" If it doesn't open automatically, go to: http://localhost:8501")
     print("=" * 50)
     
     # Launch streamlit
@@ -47,7 +47,7 @@ def main():
     except KeyboardInterrupt:
         print("\n👋 Web interface stopped by user")
     except Exception as e:
-        print(f"❌ Error launching web interface: {e}")
+        print(f" Error launching web interface: {e}")
 
 if __name__ == "__main__":
     main()
