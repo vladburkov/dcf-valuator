@@ -101,7 +101,7 @@ class StandaloneDCFAnalyzer:
                 
                 # Get historical data
                 try:
-                    print("📈 Fetching historical data...")
+                    print("Fetching historical data...")
                     time.sleep(5)
                     hist = stock.history(period="5y")
                     time.sleep(10)
@@ -133,12 +133,12 @@ class StandaloneDCFAnalyzer:
                     'beta': beta
                 }
                 
-                print(f"✅ Successfully fetched data for {self.ticker}")
+                print(f"Successfully fetched data for {self.ticker}")
                 return stock_data
                 
             except Exception as e:
                 error_msg = str(e)
-                print(f"❌ Attempt {attempt + 1} failed: {error_msg}")
+                print(f"Attempt {attempt + 1} failed: {error_msg}")
                 
                 # Check if it's a rate limiting error
                 if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
@@ -149,7 +149,7 @@ class StandaloneDCFAnalyzer:
                         continue
                 
                 if attempt == max_retries - 1:
-                    print(f"❌ All attempts failed for {self.ticker}")
+                    print(f" All attempts failed for {self.ticker}")
                     return None
                 
                 # Regular retry delay
@@ -177,7 +177,7 @@ class StandaloneDCFAnalyzer:
             info = stock.info
             
             if not info or len(info) < 5:
-                print("❌ Fallback method also failed")
+                print(" Fallback method also failed")
                 return None
             
             # Get minimal data
@@ -201,7 +201,7 @@ class StandaloneDCFAnalyzer:
             return stock_data
             
         except Exception as e:
-            print(f"❌ Fallback method failed: {e}")
+            print(f"Fallback method failed: {e}")
             return None
     
     def _calculate_beta(self, hist_data):
@@ -288,7 +288,7 @@ class StandaloneDCFAnalyzer:
                 if not treasury_hist.empty:
                     rate = treasury_hist['Close'].iloc[-1] / 100
                     self.risk_free_rate = rate
-                    print(f"✅ Risk-free rate: {rate:.2%}")
+                    print(f" Risk-free rate: {rate:.2%}")
                     return rate
                 else:
                     print("No Treasury data received, using default")
@@ -344,7 +344,7 @@ class StandaloneDCFAnalyzer:
             tax_rate = 0.25  # 25% tax rate
             wacc = (equity_weight * cost_of_equity) + (debt_weight * cost_of_debt * (1 - tax_rate))
             
-            print(f"✅ WACC calculated: {wacc:.2%}")
+            print(f"WACC calculated: {wacc:.2%}")
             return wacc
             
         except Exception as e:
@@ -401,7 +401,7 @@ class StandaloneDCFAnalyzer:
                 'Free Cash Flow': free_cash_flow
             })
             
-            print("✅ Free Cash Flow calculated")
+            print("Free Cash Flow calculated")
             return fcf_df
             
         except Exception as e:
@@ -426,7 +426,7 @@ class StandaloneDCFAnalyzer:
             net_income = info.get('netIncomeToCommon', 0)
             
             if revenue == 0 and net_income == 0:
-                print("❌ Cannot estimate FCF without revenue or net income data")
+                print("Cannot estimate FCF without revenue or net income data")
                 return pd.DataFrame()
             
             # Estimate FCF as a percentage of revenue or net income
@@ -447,7 +447,7 @@ class StandaloneDCFAnalyzer:
                 'Free Cash Flow': fcf_series
             })
             
-            print("✅ Estimated free cash flow from available data")
+            print(" Estimated free cash flow from available data")
             return fcf_df
             
         except Exception as e:
@@ -512,7 +512,7 @@ class StandaloneDCFAnalyzer:
                 })
             
             projection_df = pd.DataFrame(projections)
-            print(f"✅ Projected {years} years of future cash flows")
+            print(f"Projected {years} years of future cash flows")
             return projection_df
             
         except Exception as e:
@@ -533,7 +533,7 @@ class StandaloneDCFAnalyzer:
         """
         try:
             terminal_value = (final_fcf * (1 + terminal_growth)) / (wacc - terminal_growth)
-            print(f"✅ Terminal value calculated: ${terminal_value:,.0f}")
+            print(f"Terminal value calculated: ${terminal_value:,.0f}")
             return terminal_value
             
         except Exception as e:
@@ -558,10 +558,10 @@ class StandaloneDCFAnalyzer:
             # Get stock data
             stock_data = self.get_stock_data_with_retry()
             if not stock_data:
-                print("❌ Failed to get stock data, trying fallback method...")
+                print(" Failed to get stock data, trying fallback method...")
                 stock_data = self._get_minimal_stock_data()
                 if not stock_data:
-                    print("❌ All data fetching methods failed")
+                    print("All data fetching methods failed")
                     return None
             
             # Calculate WACC
@@ -573,13 +573,13 @@ class StandaloneDCFAnalyzer:
                 print(" No cash flow data available, using estimated FCF...")
                 fcf_data = self._estimate_free_cash_flow(stock_data)
                 if fcf_data.empty:
-                    print("❌ Cannot perform DCF without cash flow data")
+                    print(" Cannot perform DCF without cash flow data")
                     return None
             
             # Project future cash flows
             projections = self.project_future_cash_flows(fcf_data, years)
             if projections.empty:
-                print("❌ Cannot perform DCF without projections")
+                print(" Cannot perform DCF without projections")
                 return None
             
             # Calculate present value of projected cash flows
