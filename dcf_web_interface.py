@@ -143,10 +143,21 @@ class DCFWebInterface:
                 'LIN', 'NEE', 'PM', 'T', 'HON', 'UNP', 'LOW', 'SPGI', 'RTX', 'INTU'
             ]
             
+            # Import rate limiter from standalone analyzer
+            try:
+                from standalone_dcf_analyzer import RateLimiter
+            except ImportError:
+                # Fallback if rate limiter not available
+                class RateLimiter:
+                    @classmethod
+                    def wait_if_needed(cls):
+                        time.sleep(2)  # Default 2 second delay
+            
             # Search through common tickers
             for ticker in common_tickers:
                 if query.upper() in ticker.upper():
                     try:
+                        RateLimiter.wait_if_needed()
                         stock = yf.Ticker(ticker)
                         info = stock.info
                         if info and 'longName' in info:
@@ -165,6 +176,7 @@ class DCFWebInterface:
             # Also try to get info for the query if it looks like a ticker
             if len(query) <= 5 and query.isalpha():
                 try:
+                    RateLimiter.wait_if_needed()
                     stock = yf.Ticker(query.upper())
                     info = stock.info
                     if info and 'longName' in info:
