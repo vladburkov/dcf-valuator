@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Standalone DCF Analysis Tool
 Complete DCF valuation with buy/sell/hold recommendations.
@@ -12,7 +11,57 @@ import time
 import requests
 from datetime import datetime, timedelta
 import warnings
+import threading
 warnings.filterwarnings('ignore')
+
+
+class RateLimiter:
+    """
+    Global rate limiter to prevent API rate limiting across all instances.
+    """
+    _lock = threading.Lock()
+    _last_request_time = 0
+    _min_delay_between_requests = 3.0  # Minimum 3 seconds between any requests
+    _rate_limit_detected = False
+    _rate_limit_wait_until = 0
+    
+    @classmethod
+    def wait_if_needed(cls):
+        """Wait if needed to respect rate limits."""
+        with cls._lock:
+            current_time = time.time()
+            
+            # If we've detected rate limiting, wait longer
+            if cls._rate_limit_detected and current_time < cls._rate_limit_wait_until:
+                wait_time = cls._rate_limit_wait_until - current_time
+                if wait_time > 0:
+                    print(f" Rate limit active. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    cls._rate_limit_detected = False
+            
+            # Normal rate limiting - ensure minimum delay between requests
+            time_since_last = current_time - cls._last_request_time
+            if time_since_last < cls._min_delay_between_requests:
+                wait_time = cls._min_delay_between_requests - time_since_last
+                time.sleep(wait_time)
+            
+            cls._last_request_time = time.time()
+    
+    @classmethod
+    def mark_rate_limit(cls, wait_seconds=300):
+        """Mark that rate limiting was detected and wait longer."""
+        with cls._lock:
+            cls._rate_limit_detected = True
+            cls._rate_limit_wait_until = time.time() + wait_seconds
+            print(f" Rate limit detected. Will wait {wait_seconds} seconds before next request.")
+    
+    @classmethod
+    def reset(cls):
+        """Reset rate limiter state."""
+        with cls._lock:
+            cls._rate_limit_detected = False
+            cls._rate_limit_wait_until = 0
+
 
 class StandaloneDCFAnalyzer:
     """
@@ -31,7 +80,20 @@ class StandaloneDCFAnalyzer:
         self.risk_free_rate = 0.045  # Default 4.5%
         self.market_risk_premium = 0.06  # Default 6%
         
-    def get_stock_data_with_retry(self, max_retries=3, delay=30):
+    def _is_rate_limit_error(self, error):
+        """Check if error is a rate limit error."""
+        error_str = str(error).lower()
+        rate_limit_indicators = [
+            "rate limit",
+            "too many requests",
+            "429",
+            "throttled",
+            "quota exceeded",
+            "request limit"
+        ]
+        return any(indicator in error_str for indicator in rate_limit_indicators)
+    
+    def get_stock_data_with_retry(self, max_retries=3, delay=60):
         """
         Get stock data with enhanced retry logic to handle severe rate limiting.
         
@@ -46,25 +108,42 @@ class StandaloneDCFAnalyzer:
             try:
                 print(f"Attempt {attempt + 1}/{max_retries}: Fetching data for {self.ticker}...")
                 
-                # Much longer delays for severe rate limiting
+                # Use rate limiter before making any request
+                RateLimiter.wait_if_needed()
+                
+                # Much longer delays for retries
                 if attempt > 0:
-                    wait_time = delay * (3 ** attempt) + np.random.uniform(10, 30)  # Much longer exponential backoff
-                    print(f"Waiting {wait_time:.1f} seconds before retry...")
+                    # Exponential backoff: 60s, 180s, 540s for attempts 1, 2, 3
+                    wait_time = delay * (3 ** attempt) + np.random.uniform(30, 60)
+                    print(f"⏳ Waiting {wait_time:.1f} seconds before retry...")
                     time.sleep(wait_time)
+                    RateLimiter.wait_if_needed()
                 
                 # Add initial delay for first attempt
                 if attempt == 0:
-                    time.sleep(10)  # Longer initial delay
+                    time.sleep(5)  # Initial delay
+                    RateLimiter.wait_if_needed()
                 
                 stock = yf.Ticker(self.ticker)
                 
                 # Get basic info with timeout
                 try:
+                    RateLimiter.wait_if_needed()
                     info = stock.info
                     if not info or len(info) < 10:  # Check if we got meaningful data
                         raise Exception("Insufficient info data received")
                 except Exception as e:
-                    print(f"Info fetch failed: {e}")
+                    error_msg = str(e)
+                    print(f"Info fetch failed: {error_msg}")
+                    
+                    # Check for rate limiting
+                    if self._is_rate_limit_error(e):
+                        RateLimiter.mark_rate_limit(wait_seconds=300 + (attempt * 60))
+                        if attempt < max_retries - 1:
+                            continue
+                        else:
+                            raise e
+                    
                     if attempt < max_retries - 1:
                         continue
                     else:
@@ -76,37 +155,45 @@ class StandaloneDCFAnalyzer:
                 cashflow = pd.DataFrame()
                 hist = pd.DataFrame()
                 
-                # Try to get financials with much longer delays
+                # Try to get financials with delays
                 try:
                     print("Fetching financial statements...")
-                    time.sleep(5)  # Longer delay before request
+                    RateLimiter.wait_if_needed()
                     financials = stock.financials
-                    time.sleep(10)  # Much longer delay between requests
                 except Exception as e:
-                    print(f" Financials fetch failed: {e}")
+                    error_msg = str(e)
+                    print(f" Financials fetch failed: {error_msg}")
+                    if self._is_rate_limit_error(e):
+                        RateLimiter.mark_rate_limit(wait_seconds=300)
                 
                 try:
-                    time.sleep(5)
+                    RateLimiter.wait_if_needed()
                     balance_sheet = stock.balance_sheet
-                    time.sleep(10)
                 except Exception as e:
-                    print(f" Balance sheet fetch failed: {e}")
+                    error_msg = str(e)
+                    print(f" Balance sheet fetch failed: {error_msg}")
+                    if self._is_rate_limit_error(e):
+                        RateLimiter.mark_rate_limit(wait_seconds=300)
                 
                 try:
-                    time.sleep(5)
+                    RateLimiter.wait_if_needed()
                     cashflow = stock.cashflow
-                    time.sleep(10)
                 except Exception as e:
-                    print(f" Cash flow fetch failed: {e}")
+                    error_msg = str(e)
+                    print(f" Cash flow fetch failed: {error_msg}")
+                    if self._is_rate_limit_error(e):
+                        RateLimiter.mark_rate_limit(wait_seconds=300)
                 
                 # Get historical data
                 try:
                     print("Fetching historical data...")
-                    time.sleep(5)
+                    RateLimiter.wait_if_needed()
                     hist = stock.history(period="5y")
-                    time.sleep(10)
                 except Exception as e:
-                    print(f" Historical data fetch failed: {e}")
+                    error_msg = str(e)
+                    print(f" Historical data fetch failed: {error_msg}")
+                    if self._is_rate_limit_error(e):
+                        RateLimiter.mark_rate_limit(wait_seconds=300)
                 
                 # Get current price with fallback
                 current_price = 0
@@ -141,19 +228,26 @@ class StandaloneDCFAnalyzer:
                 print(f"Attempt {attempt + 1} failed: {error_msg}")
                 
                 # Check if it's a rate limiting error
-                if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                if self._is_rate_limit_error(e):
+                    RateLimiter.mark_rate_limit(wait_seconds=300 + (attempt * 120))
                     if attempt < max_retries - 1:
-                        wait_time = delay * (5 ** attempt) + np.random.uniform(30, 60)  # Much longer wait for rate limits
-                        print(f"🚫 Rate limited. Waiting {wait_time:.1f} seconds...")
+                        # Wait longer for rate limits
+                        wait_time = 300 + (attempt * 120) + np.random.uniform(30, 60)
+                        print(f"Rate limited. Waiting {wait_time:.1f} seconds before retry...")
                         time.sleep(wait_time)
                         continue
+                    else:
+                        print(f"All attempts failed for {self.ticker} due to rate limiting")
+                        return None
                 
                 if attempt == max_retries - 1:
-                    print(f" All attempts failed for {self.ticker}")
+                    print(f"All attempts failed for {self.ticker}")
                     return None
                 
                 # Regular retry delay
-                time.sleep(delay * (attempt + 1))
+                wait_time = delay * (attempt + 1) + np.random.uniform(10, 20)
+                print(f"⏳ Waiting {wait_time:.1f} seconds before retry...")
+                time.sleep(wait_time)
         
         return None
     
@@ -167,17 +261,18 @@ class StandaloneDCFAnalyzer:
         try:
             print("🔄 Trying fallback data collection method...")
             
-            # Wait longer before trying fallback
-            time.sleep(10)
+            # Wait longer before trying fallback and use rate limiter
+            time.sleep(15)
+            RateLimiter.wait_if_needed()
             
             stock = yf.Ticker(self.ticker)
             
-            # Try to get just the basic info with a very long delay
-            time.sleep(5)
+            # Try to get just the basic info with rate limiting
+            RateLimiter.wait_if_needed()
             info = stock.info
             
             if not info or len(info) < 5:
-                print(" Fallback method also failed")
+                print("❌ Fallback method also failed - insufficient data")
                 return None
             
             # Get minimal data
@@ -201,7 +296,10 @@ class StandaloneDCFAnalyzer:
             return stock_data
             
         except Exception as e:
-            print(f"Fallback method failed: {e}")
+            error_msg = str(e)
+            print(f"❌ Fallback method failed: {error_msg}")
+            if self._is_rate_limit_error(e):
+                RateLimiter.mark_rate_limit(wait_seconds=600)
             return None
     
     def _calculate_beta(self, hist_data):
@@ -225,10 +323,11 @@ class StandaloneDCFAnalyzer:
             for attempt in range(max_retries):
                 try:
                     if attempt > 0:
-                        wait_time = 3 * (attempt + 1) + np.random.uniform(1, 3)
+                        wait_time = 10 * (attempt + 1) + np.random.uniform(5, 10)
                         print(f"⏳ Waiting {wait_time:.1f} seconds before retrying S&P 500 data...")
                         time.sleep(wait_time)
                     
+                    RateLimiter.wait_if_needed()
                     sp500 = yf.Ticker("^GSPC")
                     sp500_hist = sp500.history(period="5y")
                     
@@ -236,7 +335,10 @@ class StandaloneDCFAnalyzer:
                         break
                         
                 except Exception as e:
-                    print(f" S&P 500 data fetch attempt {attempt + 1} failed: {e}")
+                    error_msg = str(e)
+                    print(f" S&P 500 data fetch attempt {attempt + 1} failed: {error_msg}")
+                    if self._is_rate_limit_error(e):
+                        RateLimiter.mark_rate_limit(wait_seconds=300)
                     if attempt == max_retries - 1:
                         print("Using default beta: 1.0")
                         return 1.0
@@ -277,10 +379,11 @@ class StandaloneDCFAnalyzer:
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    wait_time = 5 * (attempt + 1) + np.random.uniform(2, 5)
+                    wait_time = 10 * (attempt + 1) + np.random.uniform(5, 10)
                     print(f"⏳ Waiting {wait_time:.1f} seconds before retrying Treasury yield...")
                     time.sleep(wait_time)
                 
+                RateLimiter.wait_if_needed()
                 print("Fetching 10-year Treasury yield...")
                 treasury = yf.Ticker("^TNX")
                 treasury_hist = treasury.history(period="1d")
@@ -295,7 +398,10 @@ class StandaloneDCFAnalyzer:
                     break
                     
             except Exception as e:
-                print(f" Treasury yield fetch attempt {attempt + 1} failed: {e}")
+                error_msg = str(e)
+                print(f" Treasury yield fetch attempt {attempt + 1} failed: {error_msg}")
+                if self._is_rate_limit_error(e):
+                    RateLimiter.mark_rate_limit(wait_seconds=300)
                 if attempt == max_retries - 1:
                     print("Using default risk-free rate: 4.5%")
                     return self.risk_free_rate
@@ -839,6 +945,10 @@ def main():
             while True:
                 another = input(f"\nWould you like to analyze another stock? (y/n): ").lower().strip()
                 if another in ['y', 'yes']:
+                    # Add delay before analyzing next stock to prevent rate limiting
+                    print("\n⏳ Waiting 10 seconds before next analysis to prevent rate limiting...")
+                    time.sleep(10)
+                    RateLimiter.wait_if_needed()
                     break
                 elif another in ['n', 'no']:
                     print("\n👋 Thank you for using the DCF Analyzer!")
@@ -847,6 +957,8 @@ def main():
                     print("Please enter 'y' for yes or 'n' for no.")
         else:
             print(f"\n❌ Analysis failed for {ticker}. Please try again with a different ticker.")
+            # Reset rate limiter on failure to allow retry
+            RateLimiter.reset()
 
 
 def demo_mode():
